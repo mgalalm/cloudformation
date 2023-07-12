@@ -20,6 +20,61 @@ Parameters:
       - m1.large
     Description: Enter t2.micro, m1.small, or m1.large. Default is t2.micro.
 Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      Tags:
+        - Key: Name
+          Value: Default VPC
+  Subnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      Tags:
+        - Key: Name
+          Value: Primary Subnet
+      MapPublicIpOnLaunch: true
+  ## INTERNET GATEWAY
+  InternetGateway:
+      Type: AWS::EC2::InternetGateway
+      Properties:
+        Tags:
+          - Key: Name
+            Value: Default InternetGateway
+  
+  ## Attach INTERNET GATEWAY to VPC
+  GatewayToInternet:
+      Type: AWS::EC2::VPCGatewayAttachment
+      Properties:
+        VpcId: !Ref VPC
+        InternetGatewayId: !Ref InternetGateway
+  
+  ## PUBLIC ROUTING TABLE
+  PrimaryRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: Primary RouteTable
+ 
+  ### Add route to InternetGatewayId in the PUBLIC ROUTING TABLE
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayToInternet
+    Properties:
+      RouteTableId: !Ref PrimaryRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+ 
+  ## Associate Subnet to the Route Table
+  PublicSubnetRouteTableAssociation:
+        Type: AWS::EC2::SubnetRouteTableAssociation
+        Properties:
+          SubnetId: !Ref Subnet
+          RouteTableId: !Ref PrimaryRouteTable
   NewKeyPair:
     Type: 'AWS::EC2::KeyPair'
     Properties:
@@ -36,7 +91,7 @@ Resources:
             files:
               /var/www/html/index.php:
                 content: !Sub | 
-                  <?php print "Hello world"; ?>
+                  <?php echo "Hello world"; ?>
             services:
               sysvinit:
                 httpd:
@@ -52,21 +107,23 @@ Resources:
       KeyName: !Ref NewKeyPair
       Tags:
         - Key: Name
-          Value: A simple example
+          Value: A simple php web server example
       UserData:
         'Fn::Base64':
           !Sub |
-            #!bin/bash -xe
-            # Enusre AWS CNF Bootstrap is the latest
+            #!/bin/bash -xe
+            # Enusre AWS CFN Bootstrap is the latest
             yum install -y aws-cfn-bootstrap
             # Install the files and pakcages from the metadata
             /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource Ec2Instance --region ${AWS::Region}
-      SecurityGroups:
-        - !Ref MySecurityGroup
+      SecurityGroupIds: 
+        - !GetAtt MySecurityGroup.GroupId
+      SubnetId: !Ref Subnet
   MySecurityGroup:
     Type: "AWS::EC2::SecurityGroup"
     Properties:
       GroupDescription: Enable SSH access via port 22
+      VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: '22'
@@ -75,6 +132,10 @@ Resources:
         - IpProtocol: tcp
           FromPort: '80'
           ToPort: '80'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '443'
+          ToPort: '443'
           CidrIp: 0.0.0.0/0
 Outputs:
   ServerDns:
